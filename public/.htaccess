@@ -1,0 +1,15 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # If the app lives in a subdirectory, set this to that path (e.g. /myapp/)
+  RewriteBase /
+
+  # Do not rewrite the document itself
+  RewriteRule ^index\.html$ - [L]
+
+  # Leave real files and folders (assets, vite.svg, etc.) as-is
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+  # SPA fallback: deep links and refresh hit index.html
+  RewriteRule . /index.html [L]
+</IfModule>

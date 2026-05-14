@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, Download, Eye, File, FileType, FolderOpen, Plus, Printer, Settings } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, ChevronDown, Download, Eye, File, FileType, FolderOpen, Plus, Printer, Settings } from "lucide-react";
+import type { SyncStatus } from "@/Router";
 import {
   DndContext,
   closestCenter,
@@ -76,75 +77,7 @@ import {
   type FontUpload,
   type Variant,
 } from "@/lib/types";
-
-// ── .typomoodboard export/import format ─────────────────────────────────────
-
-interface TypemoodboardFile {
-  version: 1;
-  name: string;
-  blocks: Array<{
-    kind: BlockKind;
-    family: string;
-    style: string;
-    source: "system" | "upload";
-    sampleText: string;
-    trackingPerMille?: number;
-    twoColumnSizes?: boolean;
-    variants: Array<{ sizePt: number; leadingPt: number }>;
-  }>;
-}
-
-function exportTypomoodboard(name: string, blocks: FontBlock[]) {
-  const data: TypemoodboardFile = {
-    version: 1,
-    name,
-    blocks: blocks.map((b) => ({
-      kind: b.kind,
-      family: b.family,
-      style: b.style,
-      source: b.source,
-      sampleText: b.sampleText,
-      trackingPerMille: b.trackingPerMille,
-      twoColumnSizes: b.twoColumnSizes || undefined,
-      variants: b.variants.map((v) => ({ sizePt: v.sizePt, leadingPt: v.leadingPt })),
-    })),
-  };
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${name || "moodboard"}.typomoodboard`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function parseTypomoodboardFile(json: string): { name: string; blocks: FontBlock[] } | null {
-  try {
-    const data = JSON.parse(json) as TypemoodboardFile;
-    if (data.version !== 1 || !Array.isArray(data.blocks)) return null;
-    const blocks: FontBlock[] = data.blocks.map((b) => ({
-      id: crypto.randomUUID(),
-      kind: b.kind,
-      family: b.family,
-      style: b.style,
-      source: b.source === "upload" ? "system" : b.source,
-      sampleText: b.sampleText,
-      trackingPerMille: b.trackingPerMille ?? 0,
-      twoColumnSizes: b.twoColumnSizes ?? false,
-      variants: b.variants.map((v) => ({
-        id: crypto.randomUUID(),
-        sizePt: v.sizePt,
-        leadingPt: v.leadingPt,
-      })),
-    }));
-    return { name: data.name, blocks };
-  } catch {
-    return null;
-  }
-}
+import { exportTypomoodboard, parseTypomoodboardFile } from "@/lib/typomoodboard-file";
 
 // ── SortableBlockCard wrapper ────────────────────────────────────────────────
 
@@ -201,23 +134,70 @@ function useReorderBlocks(setBlocks: React.Dispatch<React.SetStateAction<FontBlo
 
 // ── Root App ─────────────────────────────────────────────────────────────────
 
-export function App() {
-  const [name, setName] = useState("My first Typo Moodboard");
-  const [blocks, setBlocks] = useState<FontBlock[]>([]);
+export interface AppProps {
+  initialName?: string;
+  initialBlocks?: FontBlock[];
+  initialDefaultHeadingText?: string;
+  initialDefaultBodyText?: string;
+  onBack?: () => void;
+  onDataChange?: (data: {
+    name: string;
+    blocks: FontBlock[];
+    defaultHeadingText: string;
+    defaultBodyText: string;
+  }) => void;
+  syncStatus?: Exclude<SyncStatus, "idle">;
+  backLabel?: string;
+  emptyBackLabel?: string;
+}
+
+export function App({
+  initialName = "My first Typo Moodboard",
+  initialBlocks = [],
+  initialDefaultHeadingText,
+  initialDefaultBodyText,
+  onBack,
+  onDataChange,
+  syncStatus,
+  backLabel = "Dashboard",
+  emptyBackLabel = "Back to Start",
+}: AppProps = {}) {
+  const [name, setName] = useState(initialName);
+  const [blocks, setBlocks] = useState<FontBlock[]>(initialBlocks);
   const [uploads, setUploads] = useState<FontUpload[]>([]);
   const [systemFonts, setSystemFonts] = useState<LocalFontEntry[]>([]);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [defaultHeadingText, setDefaultHeadingText] = useState(HEADING_SAMPLE);
-  const [defaultBodyText, setDefaultBodyText] = useState(BODY_SAMPLE);
-  const [settingsHeadingDraft, setSettingsHeadingDraft] = useState(HEADING_SAMPLE);
-  const [settingsBodyDraft, setSettingsBodyDraft] = useState(BODY_SAMPLE);
+  const [defaultHeadingText, setDefaultHeadingText] = useState(
+    initialDefaultHeadingText ?? HEADING_SAMPLE,
+  );
+  const [defaultBodyText, setDefaultBodyText] = useState(initialDefaultBodyText ?? BODY_SAMPLE);
+  const [settingsHeadingDraft, setSettingsHeadingDraft] = useState(
+    initialDefaultHeadingText ?? HEADING_SAMPLE,
+  );
+  const [settingsBodyDraft, setSettingsBodyDraft] = useState(initialDefaultBodyText ?? BODY_SAMPLE);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
 
   const prevUrlRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const skipSyncRef = useRef(true);
+
+  // Notify parent of changes for cloud sync (skip initial render)
+  useEffect(() => {
+    if (skipSyncRef.current) {
+      skipSyncRef.current = false;
+      return;
+    }
+    onDataChange?.({
+      name,
+      blocks,
+      defaultHeadingText,
+      defaultBodyText,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, blocks, defaultHeadingText, defaultBodyText]);
 
   useEffect(() => {
     if (supportsLocalFonts()) {
@@ -392,6 +372,10 @@ export function App() {
       }
       setName(parsed.name);
       setBlocks(parsed.blocks);
+      setDefaultHeadingText(parsed.defaultHeadingText);
+      setDefaultBodyText(parsed.defaultBodyText);
+      setSettingsHeadingDraft(parsed.defaultHeadingText);
+      setSettingsBodyDraft(parsed.defaultBodyText);
       setCollapsedIds(new Set(parsed.blocks.slice(0, -1).map((b) => b.id)));
       toast.success(`Imported "${parsed.name}" — ${parsed.blocks.length} block${parsed.blocks.length === 1 ? "" : "s"}`);
     };
@@ -439,6 +423,10 @@ export function App() {
         downloadPdf={downloadPdf}
         printPdf={printPdf}
         addBlock={addBlock}
+        onBack={onBack}
+        backLabel={backLabel}
+        emptyBackLabel={emptyBackLabel}
+        syncStatus={syncStatus}
       />
     </SidebarProvider>
   );
@@ -480,6 +468,10 @@ interface AppShellProps {
   downloadPdf: () => void;
   printPdf: () => void;
   addBlock: (kind: BlockKind) => void;
+  onBack?: () => void;
+  backLabel: string;
+  emptyBackLabel: string;
+  syncStatus?: Exclude<SyncStatus, "idle">;
 }
 
 function AppShell({
@@ -493,6 +485,7 @@ function AppShell({
   setDefaultHeadingText, setDefaultBodyText,
   pdfUrl, rendering, importInputRef, onImport,
   downloadPdf, printPdf, addBlock,
+  onBack, backLabel, emptyBackLabel, syncStatus,
 }: AppShellProps) {
   const { open: sidebarOpen, setOpen: setSidebarOpen, isMobile } = useSidebar();
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
@@ -548,7 +541,9 @@ function AppShell({
           <Download className="size-4" />
           Download PDF
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => exportTypomoodboard(name, blocks)}>
+        <DropdownMenuItem
+          onClick={() => exportTypomoodboard(name, blocks, defaultHeadingText, defaultBodyText)}
+        >
           <File className="size-4" />
           Export .typomoodboard
         </DropdownMenuItem>
@@ -577,37 +572,40 @@ function AppShell({
 
   const fontManager = (
     <>
-      <SidebarHeader className="flex h-14 shrink-0 flex-row items-center gap-0 border-b border-sidebar-border px-4 py-0">
-        <div className="flex min-h-0 w-full items-center gap-2.5">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded bg-foreground text-background">
-            <FileType className="size-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold leading-none">Typo Moodboard</div>
-            <div className="mt-0.5 text-[11px] text-muted-foreground leading-none">
-              designedByCarl.de
-            </div>
-          </div>
-          {isMobile && (
+      <SidebarHeader className="flex h-14 shrink-0 flex-row items-center gap-2 border-b border-sidebar-border px-3 py-0">
+        <div className="flex min-h-0 w-full min-w-0 items-center gap-2">
+          {onBack && (
             <Button
-              variant="outline"
-              size="sm"
-              className="h-8 shrink-0"
-              disabled={isEmpty || !pdfUrl}
-              onClick={() => setMobilePreviewOpen(true)}
+              variant="ghost"
+              className="h-9 shrink-0 gap-2 px-2 font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              onClick={onBack}
             >
-              <Eye className="size-3.5" />
-              Preview
+              <ArrowLeft className="size-4 shrink-0 opacity-80" aria-hidden />
+              {backLabel}
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={openSettings}
-          >
-            <Settings className="size-3.5" />
-          </Button>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {isMobile && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={isEmpty || !pdfUrl}
+                onClick={() => setMobilePreviewOpen(true)}
+              >
+                <Eye className="size-3.5" />
+                Preview
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              onClick={openSettings}
+            >
+              <Settings className="size-3.5" />
+            </Button>
+          </div>
         </div>
       </SidebarHeader>
 
@@ -643,6 +641,16 @@ function AppShell({
                         <FolderOpen className="size-4" />
                         Import .typomoodboard file
                       </Button>
+                      {onBack && (
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={onBack}
+                        >
+                          <ArrowLeft className="size-4" />
+                          {emptyBackLabel}
+                        </Button>
+                      )}
                       {importInput}
                     </div>
                   </EmptyContent>
@@ -732,6 +740,16 @@ function AppShell({
               <FolderOpen className="size-4" />
               Import .typomoodboard file
             </Button>
+            {onBack && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={onBack}
+              >
+                <ArrowLeft className="size-4" />
+                {emptyBackLabel}
+              </Button>
+            )}
             {importInput}
           </div>
         </EmptyContent>
@@ -868,6 +886,24 @@ function AppShell({
                   </>
                 ) : (
                   <>A4 / {blocks.length} block{blocks.length === 1 ? "" : "s"}</>
+                )}
+                {syncStatus === "syncing" && (
+                  <span className="flex items-center gap-1 text-muted-foreground/70">
+                    <span className="mx-1 opacity-40">·</span>
+                    <Spinner className="size-3" /> Syncing
+                  </span>
+                )}
+                {syncStatus === "synced" && (
+                  <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                    <span className="mx-1 opacity-40">·</span>
+                    <Check className="size-3" /> Saved
+                  </span>
+                )}
+                {syncStatus === "error" && (
+                  <span className="flex items-center gap-1 text-destructive">
+                    <span className="mx-1 opacity-40">·</span>
+                    <AlertCircle className="size-3" /> Sync failed
+                  </span>
                 )}
               </div>
               <div className="ml-auto flex items-center gap-2">
