@@ -9,7 +9,7 @@ import {
   createMoodboard,
   createMoodboardFromImport,
   deleteMoodboard,
-  renameMoodboard,
+  updateMoodboardMeta,
   subscribeMoodboards,
   type MoodboardMeta,
 } from "@/lib/firestore";
@@ -25,22 +25,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { MoodboardMetaDialog } from "@/components/moodboard-meta-dialog";
+import { getMoodboardCardAccent } from "@/lib/moodboard-emojis";
+import { cn } from "@/lib/utils";
 
 interface DashboardProps {
   user: User;
@@ -69,21 +63,58 @@ export function DashboardRoute({ user, onSignOut }: { user: User; onSignOut: () 
   return <Dashboard user={user} moodboards={moodboards} onSignOut={onSignOut} />;
 }
 
+/** Placeholder and name used when the user leaves the name field empty. */
+const UNTITLED_MOODBOARD_NAME = "Untitled Moodboard";
+
+type MetaEditorState =
+  | null
+  | { mode: "create" }
+  | { mode: "edit"; boardId: string; initialName: string; initialEmoji: string };
+
 export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+
+  const [metaEditor, setMetaEditor] = useState<MetaEditorState>(null);
+  const [metaBusy, setMetaBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  async function handleCreateNew() {
-    setCreating(true);
+  function openCreateMetaDialog() {
+    setMetaEditor({ mode: "create" });
+  }
+
+  async function handleMetaSubmit(payload: { name: string; iconEmoji: string }) {
+    if (!metaEditor) return;
+    const trimmed = payload.name.trim();
+    if (metaEditor.mode === "edit" && !trimmed) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+    const name = trimmed || UNTITLED_MOODBOARD_NAME;
+    setMetaBusy(true);
     try {
-      const id = await createMoodboard(user.uid, "Untitled Moodboard");
-      navigate(`/p/${id}`);
+      if (metaEditor.mode === "create") {
+        setCreating(true);
+        const id = await createMoodboard(user.uid, name, payload.iconEmoji);
+        setMetaEditor(null);
+        navigate(`/p/${id}`);
+      } else {
+        await updateMoodboardMeta(user.uid, metaEditor.boardId, {
+          name,
+          iconEmoji: payload.iconEmoji,
+        });
+        toast.success("Changes saved");
+        setMetaEditor(null);
+      }
     } catch {
-      toast.error("Could not create moodboard");
+      toast.error(
+        metaEditor.mode === "create" ? "Could not create moodboard" : "Could not save moodboard",
+      );
+    } finally {
+      setMetaBusy(false);
       setCreating(false);
     }
   }
@@ -110,6 +141,7 @@ export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
         parsed.blocks,
         parsed.defaultHeadingText,
         parsed.defaultBodyText,
+        parsed.iconEmoji,
       );
       toast.success(`Imported “${displayName}”`);
       navigate(`/p/${id}`);
@@ -134,22 +166,6 @@ export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
     }
   }
 
-  async function handleRename(boardId: string, newName: string): Promise<boolean> {
-    const trimmed = newName.trim();
-    if (!trimmed) {
-      toast.error("Name cannot be empty");
-      return false;
-    }
-    try {
-      await renameMoodboard(user.uid, boardId, trimmed);
-      toast.success("Moodboard renamed");
-      return true;
-    } catch {
-      toast.error("Could not rename moodboard");
-      return false;
-    }
-  }
-
   async function handleSignOut() {
     if (auth) await signOut(auth);
     onSignOut();
@@ -168,7 +184,12 @@ export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* Header */}
-      <header className="h-14 border-b border-border">
+      <header
+        className={cn(
+          "sticky top-0 z-30 h-14 shrink-0 border-b border-border bg-background",
+          "motion-safe:animate-[app-menubar-enter_0.38s_cubic-bezier(0.22,1,0.36,1)_both]",
+        )}
+      >
         <div className="container mx-auto flex h-full items-center gap-4 px-6">
           <span className="text-base font-semibold tracking-tight">Dashboard</span>
 
@@ -187,18 +208,20 @@ export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
             <Button
               size="sm"
               variant="outline"
+              className="hidden md:inline-flex"
               disabled={importing || creating}
               onClick={() => importInputRef.current?.click()}
             >
               {importing ? <Spinner className="size-3.5" /> : <FolderOpen className="size-3.5" />}
               Import .typomoodboard file
             </Button>
-            <Button size="sm" onClick={handleCreateNew} disabled={creating || importing}>
-              {creating ? (
-                <Spinner className="size-3.5" />
-              ) : (
-                <Plus className="size-3.5" />
-              )}
+            <Button
+              size="sm"
+              className="hidden md:inline-flex"
+              onClick={openCreateMetaDialog}
+              disabled={creating || importing || metaEditor !== null}
+            >
+              {creating ? <Spinner className="size-3.5" /> : <Plus className="size-3.5" />}
               New Moodboard
             </Button>
 
@@ -252,10 +275,6 @@ export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
                 Create your first typographic moodboard.
               </p>
             </div>
-            <Button size="sm" onClick={handleCreateNew} disabled={creating || importing}>
-              {creating ? <Spinner className="size-3.5" /> : <Plus className="size-3.5" />}
-              New Moodboard
-            </Button>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -269,13 +288,50 @@ export function Dashboard({ user, moodboards, onSignOut }: DashboardProps) {
                   board={board}
                   onOpen={() => navigate(`/p/${board.id}`)}
                   onRequestDelete={() => setDeleteTarget({ id: board.id, name: board.name })}
-                  onRename={(name) => handleRename(board.id, name)}
+                  onRequestEdit={() =>
+                    setMetaEditor({
+                      mode: "edit",
+                      boardId: board.id,
+                      initialName: board.name,
+                      initialEmoji: board.iconEmoji,
+                    })
+                  }
                 />
               </div>
             ))}
           </div>
         )}
       </main>
+
+      <Button
+        size="lg"
+        className={cn(
+          "fixed z-40 gap-2 rounded-full px-5 shadow-lg md:hidden",
+          "bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1.25rem,env(safe-area-inset-right))]",
+          "motion-safe:animate-[landing-fade-up_0.38s_cubic-bezier(0.22,1,0.36,1)_both]",
+        )}
+        onClick={openCreateMetaDialog}
+        disabled={creating || importing || metaEditor !== null}
+      >
+        {creating ? <Spinner className="size-4" /> : <Plus className="size-4" />}
+        New Moodboard
+      </Button>
+
+      <MoodboardMetaDialog
+        open={metaEditor !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMetaEditor(null);
+            setMetaBusy(false);
+          }
+        }}
+        mode={metaEditor?.mode ?? "create"}
+        initialName={metaEditor?.mode === "edit" ? metaEditor.initialName : undefined}
+        initialEmoji={metaEditor?.mode === "edit" ? metaEditor.initialEmoji : undefined}
+        namePlaceholder={UNTITLED_MOODBOARD_NAME}
+        busy={metaBusy}
+        onSubmit={handleMetaSubmit}
+      />
 
       <AlertDialog
         open={deleteTarget !== null}
@@ -320,41 +376,15 @@ interface MoodboardCardProps {
   board: MoodboardMeta;
   onOpen: () => void;
   onRequestDelete: () => void;
-  onRename: (newName: string) => Promise<boolean>;
+  onRequestEdit: () => void;
 }
 
-function MoodboardCard({ board, onOpen, onRequestDelete, onRename }: MoodboardCardProps) {
+function MoodboardCard({ board, onOpen, onRequestDelete, onRequestEdit }: MoodboardCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameDraft, setRenameDraft] = useState(board.name);
-  const [renaming, setRenaming] = useState(false);
-  const renameInputRef = useRef<HTMLInputElement>(null);
+  const cardAccent = getMoodboardCardAccent(board.iconEmoji);
 
   const relativeDate = formatDistanceToNow(board.updatedAt, { addSuffix: true });
   const blockLabel = board.blockCount === 1 ? "1 block" : `${board.blockCount} blocks`;
-
-  useEffect(() => {
-    if (!renameOpen) return;
-    const id = requestAnimationFrame(() => {
-      renameInputRef.current?.focus();
-      renameInputRef.current?.select();
-    });
-    return () => cancelAnimationFrame(id);
-  }, [renameOpen]);
-
-  async function submitRename() {
-    if (renameDraft.trim() === board.name.trim()) {
-      setRenameOpen(false);
-      return;
-    }
-    setRenaming(true);
-    try {
-      const ok = await onRename(renameDraft);
-      if (ok) setRenameOpen(false);
-    } finally {
-      setRenaming(false);
-    }
-  }
 
   function handleCardKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" || e.key === " ") {
@@ -364,100 +394,99 @@ function MoodboardCard({ board, onOpen, onRequestDelete, onRename }: MoodboardCa
   }
 
   return (
-    <>
-      <div className="group relative w-full rounded-xl border border-border bg-card text-left transition-all duration-150 hover:border-foreground/20 hover:shadow-md">
-        {/* Open target: keep menu trigger outside this subtree so Radix portal + focus work reliably */}
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={onOpen}
-          onKeyDown={handleCardKeyDown}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenuOpen(true);
-          }}
-          className="cursor-pointer rounded-xl p-5 pr-14 flex flex-col gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
-        >
-          <div className="flex items-start gap-2">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:bg-foreground/8 transition-colors">
-              <FileType className="size-4" />
-            </div>
-          </div>
-
-          <div>
-            <p className="text-sm font-semibold truncate leading-snug">{board.name}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {blockLabel} · {relativeDate}
-            </p>
+    <div
+      className={cn(
+        "group relative w-full overflow-hidden rounded-xl border border-border bg-white text-left",
+        "transition-all duration-200 hover:border-foreground/20 hover:shadow-md",
+        "dark:bg-card",
+      )}
+    >
+      {/* Full-card tint only on hover; base stays white / card */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-0 z-0 rounded-[inherit] opacity-0 transition-opacity duration-200",
+          "group-hover:opacity-100",
+        )}
+        style={{
+          background: `color-mix(in srgb, ${cardAccent} 5.5%, var(--card))`,
+        }}
+      />
+      {/* Open target: keep menu trigger outside this subtree so Radix portal + focus work reliably */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={handleCardKeyDown}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
+        className={cn(
+          "relative z-[1] cursor-pointer rounded-xl p-5 pr-14 flex flex-col gap-3",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-card",
+        )}
+      >
+        <div className="flex items-start gap-2">
+          <div
+            className={cn(
+              "relative z-[1] flex size-9 shrink-0 items-center justify-center rounded-lg",
+              "text-[1.35rem] leading-none tracking-normal transition-[filter] duration-150 group-hover:brightness-[1.03]",
+            )}
+            style={{
+              background: `color-mix(in srgb, ${cardAccent} 28%, var(--card))`,
+            }}
+            aria-hidden
+          >
+            <span className="select-none">{board.iconEmoji}</span>
           </div>
         </div>
 
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="absolute right-2 top-2 z-10 size-8 text-muted-foreground hover:text-foreground hover:bg-muted opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-              aria-label="Card options"
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenuOpen(true);
-              }}
-            >
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="z-[200]">
-            <DropdownMenuItem
-              onSelect={() => {
-                setRenameDraft(board.name);
-                setTimeout(() => setRenameOpen(true), 0);
-              }}
-            >
-              <Pen className="size-4" />
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onSelect={() => onRequestDelete()}>
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div>
+          <p className="text-sm font-semibold truncate leading-snug">{board.name}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {blockLabel} · {relativeDate}
+          </p>
+        </div>
       </div>
 
-      <Dialog
-        open={renameOpen}
-        onOpenChange={(open) => {
-          setRenameOpen(open);
-          if (!open) setRenameDraft(board.name);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rename moodboard</DialogTitle>
-            <DialogDescription>Choose a new name for this moodboard.</DialogDescription>
-          </DialogHeader>
-          <Input
-            ref={renameInputRef}
-            value={renameDraft}
-            onChange={(e) => setRenameDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void submitRename();
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "absolute right-2 top-2 z-[2] size-8 rounded-md text-muted-foreground",
+              "border border-border bg-card/95 shadow-sm backdrop-blur-[2px]",
+              "hover:border-foreground/20 hover:bg-muted hover:text-foreground",
+              "opacity-0 transition-[opacity,colors,box-shadow] group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+            )}
+            aria-label="Card options"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuOpen(true);
             }}
-            disabled={renaming}
-            aria-label="Moodboard name"
-          />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRenameOpen(false)} disabled={renaming}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={() => void submitRename()} disabled={renaming}>
-              {renaming ? <Spinner className="size-3.5" /> : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="z-[200]">
+          <DropdownMenuItem
+            onSelect={() => {
+              setTimeout(() => onRequestEdit(), 0);
+            }}
+          >
+            <Pen className="size-4" />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={() => onRequestDelete()}>
+            <Trash2 className="size-4" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }

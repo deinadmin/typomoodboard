@@ -46,6 +46,11 @@ export async function queryLocalFonts(): Promise<LocalFontEntry[]> {
 export async function getSystemFontBytes(postscriptName: string): Promise<ArrayBuffer | null> {
   const cached = bytesCache.get(`sys:${postscriptName}`);
   if (cached) return cached;
+  // PDF (and other callers) may run before App’s first queryLocalFonts() finishes; load the list
+  // lazily so embed can still resolve system fonts after a full page reload.
+  if (supportsLocalFonts() && !cachedList) {
+    await queryLocalFonts();
+  }
   if (!cachedList) return null;
   const match = cachedList.find((f) => f.postscriptName === postscriptName);
   if (!match) return null;

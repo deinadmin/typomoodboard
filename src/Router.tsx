@@ -44,7 +44,7 @@ function LocalEditorPage() {
   const handleBack = useCallback(() => {
     navigate("/", { replace: true });
   }, [navigate]);
-  return <App onBack={handleBack} backLabel="Back" />;
+  return <App onBack={handleBack} backLabel="Back" exitRouteBgFadeOnEmptyBack />;
 }
 
 function MoodboardEditorPage({ user }: { user: User }) {
@@ -54,12 +54,14 @@ function MoodboardEditorPage({ user }: { user: User }) {
 
   const [ready, setReady] = useState(false);
   const [initialName, setInitialName] = useState("");
+  const [initialIconEmoji, setInitialIconEmoji] = useState("");
   const [initialBlocks, setInitialBlocks] = useState<FontBlock[]>([]);
   const [initialDefaultHeadingText, setInitialDefaultHeadingText] = useState("");
   const [initialDefaultBodyText, setInitialDefaultBodyText] = useState("");
 
   const latestDataRef = useRef<{
     name: string;
+    iconEmoji: string;
     blocks: FontBlock[];
     defaultHeadingText: string;
     defaultBodyText: string;
@@ -90,6 +92,7 @@ function MoodboardEditorPage({ user }: { user: User }) {
           return;
         }
         setInitialName(data.name);
+        setInitialIconEmoji(data.iconEmoji);
         setInitialBlocks(data.blocks);
         setInitialDefaultHeadingText(data.defaultHeadingText);
         setInitialDefaultBodyText(data.defaultBodyText);
@@ -117,6 +120,7 @@ function MoodboardEditorPage({ user }: { user: User }) {
           latest.blocks,
           latest.defaultHeadingText,
           latest.defaultBodyText,
+          latest.iconEmoji,
         ).catch(() => {});
       }
       latestDataRef.current = null;
@@ -126,6 +130,7 @@ function MoodboardEditorPage({ user }: { user: User }) {
   const handleDataChange = useCallback(
     (payload: {
       name: string;
+      iconEmoji: string;
       blocks: FontBlock[];
       defaultHeadingText: string;
       defaultBodyText: string;
@@ -145,6 +150,7 @@ function MoodboardEditorPage({ user }: { user: User }) {
             latest.blocks,
             latest.defaultHeadingText,
             latest.defaultBodyText,
+            latest.iconEmoji,
           );
           setSyncStatus("synced");
         } catch (err) {
@@ -171,6 +177,7 @@ function MoodboardEditorPage({ user }: { user: User }) {
           latest.blocks,
           latest.defaultHeadingText,
           latest.defaultBodyText,
+          latest.iconEmoji,
         );
       } catch {
         // ignore on navigate-away
@@ -193,6 +200,7 @@ function MoodboardEditorPage({ user }: { user: User }) {
     <App
       key={id}
       initialName={initialName}
+      initialIconEmoji={initialIconEmoji}
       initialBlocks={initialBlocks}
       initialDefaultHeadingText={initialDefaultHeadingText}
       initialDefaultBodyText={initialDefaultBodyText}

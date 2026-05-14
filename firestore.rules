@@ -1,0 +1,383 @@
+rules_version = '2';
+
+// Typo Moodboard — data model: users/{uid}/moodboards/{boardId}
+// Client: src/lib/firestore.ts
+//
+// Deploy: firebase deploy --only firestore:rules
+// Emulator: firebase emulators:start --only firestore
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // No top-level user profile document in this app — deny to prevent UID squatting / stray writes.
+    match /users/{userId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/moodboards/{boardId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && moodboardKeysAllowedCreate()
+        && moodboardPayloadValid()
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && timestampsOkCreate();
+
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && resource.data.createdAt == request.resource.data.createdAt
+        && moodboardKeysAllowedUpdate()
+        && moodboardPayloadValid()
+        && request.resource.data.updatedAt is timestamp
+        && timestampsOkUpdate();
+
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+function isSignedIn() {
+  return request.auth != null && request.auth.uid is string && request.auth.uid.size() > 0;
+}
+
+/** Optional on legacy documents; when present must be a short string (emoji / ZWJ sequence). */
+function moodboardIconEmojiOk(d) {
+  return !d.keys().hasAny(['iconEmoji'])
+    || (d.iconEmoji is string
+      && d.iconEmoji.size() > 0
+      && d.iconEmoji.size() <= 32);
+}
+
+function moodboardKeysAllowedCreate() {
+  return request.resource.data.keys().hasOnly([
+    'name',
+    'iconEmoji',
+    'blocks',
+    'blockCount',
+    'defaultHeadingText',
+    'defaultBodyText',
+    'createdAt',
+    'updatedAt',
+  ]);
+}
+
+function moodboardKeysAllowedUpdate() {
+  let k = request.resource.data.keys();
+  return k.hasOnly([
+    'name',
+    'blocks',
+    'blockCount',
+    'defaultHeadingText',
+    'defaultBodyText',
+    'createdAt',
+    'updatedAt',
+  ]) || k.hasOnly([
+    'name',
+    'iconEmoji',
+    'blocks',
+    'blockCount',
+    'defaultHeadingText',
+    'defaultBodyText',
+    'createdAt',
+    'updatedAt',
+  ]);
+}
+
+function moodboardPayloadValid() {
+  let d = request.resource.data;
+  return d.name is string
+    && d.name.size() > 0
+    && d.name.size() <= 400
+    && moodboardIconEmojiOk(d)
+    && d.blocks is list
+    && d.blocks.size() <= 80
+    && d.blockCount is int
+    && d.blockCount == d.blocks.size()
+    && d.defaultHeadingText is string
+    && d.defaultHeadingText.size() <= 20000
+    && d.defaultBodyText is string
+    && d.defaultBodyText.size() <= 20000
+    && d.createdAt is timestamp
+    && blocksPassAll(d.blocks);
+}
+
+// No recursion — Firestore rules disallow recursive functions.
+function blocksPassAll(blocks) {
+  return blocksRows0to9(blocks)
+    && blocksRows10to19(blocks)
+    && blocksRows20to29(blocks)
+    && blocksRows30to39(blocks)
+    && blocksRows40to49(blocks)
+    && blocksRows50to59(blocks)
+    && blocksRows60to69(blocks)
+    && blocksRows70to79(blocks);
+}
+
+function blocksRows0to9(blocks) {
+  return blockSlotOk(blocks, 0)
+    && blockSlotOk(blocks, 1)
+    && blockSlotOk(blocks, 2)
+    && blockSlotOk(blocks, 3)
+    && blockSlotOk(blocks, 4)
+    && blockSlotOk(blocks, 5)
+    && blockSlotOk(blocks, 6)
+    && blockSlotOk(blocks, 7)
+    && blockSlotOk(blocks, 8)
+    && blockSlotOk(blocks, 9);
+}
+
+function blocksRows10to19(blocks) {
+  return blockSlotOk(blocks, 10)
+    && blockSlotOk(blocks, 11)
+    && blockSlotOk(blocks, 12)
+    && blockSlotOk(blocks, 13)
+    && blockSlotOk(blocks, 14)
+    && blockSlotOk(blocks, 15)
+    && blockSlotOk(blocks, 16)
+    && blockSlotOk(blocks, 17)
+    && blockSlotOk(blocks, 18)
+    && blockSlotOk(blocks, 19);
+}
+
+function blocksRows20to29(blocks) {
+  return blockSlotOk(blocks, 20)
+    && blockSlotOk(blocks, 21)
+    && blockSlotOk(blocks, 22)
+    && blockSlotOk(blocks, 23)
+    && blockSlotOk(blocks, 24)
+    && blockSlotOk(blocks, 25)
+    && blockSlotOk(blocks, 26)
+    && blockSlotOk(blocks, 27)
+    && blockSlotOk(blocks, 28)
+    && blockSlotOk(blocks, 29);
+}
+
+function blocksRows30to39(blocks) {
+  return blockSlotOk(blocks, 30)
+    && blockSlotOk(blocks, 31)
+    && blockSlotOk(blocks, 32)
+    && blockSlotOk(blocks, 33)
+    && blockSlotOk(blocks, 34)
+    && blockSlotOk(blocks, 35)
+    && blockSlotOk(blocks, 36)
+    && blockSlotOk(blocks, 37)
+    && blockSlotOk(blocks, 38)
+    && blockSlotOk(blocks, 39);
+}
+
+function blocksRows40to49(blocks) {
+  return blockSlotOk(blocks, 40)
+    && blockSlotOk(blocks, 41)
+    && blockSlotOk(blocks, 42)
+    && blockSlotOk(blocks, 43)
+    && blockSlotOk(blocks, 44)
+    && blockSlotOk(blocks, 45)
+    && blockSlotOk(blocks, 46)
+    && blockSlotOk(blocks, 47)
+    && blockSlotOk(blocks, 48)
+    && blockSlotOk(blocks, 49);
+}
+
+function blocksRows50to59(blocks) {
+  return blockSlotOk(blocks, 50)
+    && blockSlotOk(blocks, 51)
+    && blockSlotOk(blocks, 52)
+    && blockSlotOk(blocks, 53)
+    && blockSlotOk(blocks, 54)
+    && blockSlotOk(blocks, 55)
+    && blockSlotOk(blocks, 56)
+    && blockSlotOk(blocks, 57)
+    && blockSlotOk(blocks, 58)
+    && blockSlotOk(blocks, 59);
+}
+
+function blocksRows60to69(blocks) {
+  return blockSlotOk(blocks, 60)
+    && blockSlotOk(blocks, 61)
+    && blockSlotOk(blocks, 62)
+    && blockSlotOk(blocks, 63)
+    && blockSlotOk(blocks, 64)
+    && blockSlotOk(blocks, 65)
+    && blockSlotOk(blocks, 66)
+    && blockSlotOk(blocks, 67)
+    && blockSlotOk(blocks, 68)
+    && blockSlotOk(blocks, 69);
+}
+
+function blocksRows70to79(blocks) {
+  return blockSlotOk(blocks, 70)
+    && blockSlotOk(blocks, 71)
+    && blockSlotOk(blocks, 72)
+    && blockSlotOk(blocks, 73)
+    && blockSlotOk(blocks, 74)
+    && blockSlotOk(blocks, 75)
+    && blockSlotOk(blocks, 76)
+    && blockSlotOk(blocks, 77)
+    && blockSlotOk(blocks, 78)
+    && blockSlotOk(blocks, 79);
+}
+
+function blockSlotOk(blocks, i) {
+  return i >= blocks.size() || validFontBlock(blocks[i]);
+}
+
+function validFontBlock(b) {
+  return b is map
+    && b.keys().hasOnly([
+      'id',
+      'kind',
+      'source',
+      'family',
+      'style',
+      'postscriptName',
+      'uploadId',
+      'trackingPerMille',
+      'variants',
+      'sampleText',
+      'twoColumnSizes',
+    ])
+    && b.id is string
+    && b.id.size() > 0
+    && b.id.size() <= 128
+    && b.kind is string
+    && b.kind in ['heading', 'body']
+    && b.source is string
+    && b.source in ['system', 'upload']
+    && b.family is string
+    && b.family.size() > 0
+    && b.family.size() <= 200
+    && b.style is string
+    && b.style.size() > 0
+    && b.style.size() <= 200
+    && (!('postscriptName' in b)
+      || b.postscriptName == null
+      || (b.postscriptName is string && b.postscriptName.size() <= 400))
+    && (!('uploadId' in b)
+      || b.uploadId == null
+      || (b.uploadId is string && b.uploadId.size() <= 128))
+    && b.trackingPerMille is int
+    && b.trackingPerMille >= -1000
+    && b.trackingPerMille <= 2000
+    && b.sampleText is string
+    && b.sampleText.size() <= 20000
+    && (!('twoColumnSizes' in b) || b.twoColumnSizes is bool)
+    && b.variants is list
+    && b.variants.size() <= 40
+    && variantsPassAll(b.variants);
+}
+
+// No recursion — max 40 variants per block (8 × 5 slots).
+function variantsPassAll(variants) {
+  return variantsRows0to4(variants)
+    && variantsRows5to9(variants)
+    && variantsRows10to14(variants)
+    && variantsRows15to19(variants)
+    && variantsRows20to24(variants)
+    && variantsRows25to29(variants)
+    && variantsRows30to34(variants)
+    && variantsRows35to39(variants);
+}
+
+function variantsRows0to4(variants) {
+  return variantSlotOk(variants, 0)
+    && variantSlotOk(variants, 1)
+    && variantSlotOk(variants, 2)
+    && variantSlotOk(variants, 3)
+    && variantSlotOk(variants, 4);
+}
+
+function variantsRows5to9(variants) {
+  return variantSlotOk(variants, 5)
+    && variantSlotOk(variants, 6)
+    && variantSlotOk(variants, 7)
+    && variantSlotOk(variants, 8)
+    && variantSlotOk(variants, 9);
+}
+
+function variantsRows10to14(variants) {
+  return variantSlotOk(variants, 10)
+    && variantSlotOk(variants, 11)
+    && variantSlotOk(variants, 12)
+    && variantSlotOk(variants, 13)
+    && variantSlotOk(variants, 14);
+}
+
+function variantsRows15to19(variants) {
+  return variantSlotOk(variants, 15)
+    && variantSlotOk(variants, 16)
+    && variantSlotOk(variants, 17)
+    && variantSlotOk(variants, 18)
+    && variantSlotOk(variants, 19);
+}
+
+function variantsRows20to24(variants) {
+  return variantSlotOk(variants, 20)
+    && variantSlotOk(variants, 21)
+    && variantSlotOk(variants, 22)
+    && variantSlotOk(variants, 23)
+    && variantSlotOk(variants, 24);
+}
+
+function variantsRows25to29(variants) {
+  return variantSlotOk(variants, 25)
+    && variantSlotOk(variants, 26)
+    && variantSlotOk(variants, 27)
+    && variantSlotOk(variants, 28)
+    && variantSlotOk(variants, 29);
+}
+
+function variantsRows30to34(variants) {
+  return variantSlotOk(variants, 30)
+    && variantSlotOk(variants, 31)
+    && variantSlotOk(variants, 32)
+    && variantSlotOk(variants, 33)
+    && variantSlotOk(variants, 34);
+}
+
+function variantsRows35to39(variants) {
+  return variantSlotOk(variants, 35)
+    && variantSlotOk(variants, 36)
+    && variantSlotOk(variants, 37)
+    && variantSlotOk(variants, 38)
+    && variantSlotOk(variants, 39);
+}
+
+function variantSlotOk(variants, i) {
+  return i >= variants.size() || validVariant(variants[i]);
+}
+
+function validVariant(v) {
+  return v is map
+    && v.keys().hasOnly(['id', 'sizePt', 'leadingPt'])
+    && v.id is string
+    && v.id.size() > 0
+    && v.id.size() <= 128
+    && v.sizePt is int
+    && v.sizePt >= 1
+    && v.sizePt <= 500
+    && v.leadingPt is int
+    && v.leadingPt >= 1
+    && v.leadingPt <= 600;
+}
+
+// New documents: both timestamps should match server commit time (serverTimestamp()).
+function timestampsOkCreate() {
+  let d = request.resource.data;
+  return d.updatedAt <= request.time + duration.value(30, 's')
+    && d.updatedAt >= request.time - duration.value(60, 's')
+    && d.createdAt <= request.time + duration.value(30, 's')
+    && d.createdAt >= request.time - duration.value(60, 's');
+}
+
+// Updates: createdAt is immutable; only bound updatedAt (handles long-lived boards).
+function timestampsOkUpdate() {
+  let d = request.resource.data;
+  return d.updatedAt <= request.time + duration.value(30, 's')
+    && d.updatedAt >= request.time - duration.value(60, 's');
+}

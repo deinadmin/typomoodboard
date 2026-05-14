@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, Check, ChevronDown, Download, Eye, File, FileType, FolderOpen, Plus, Printer, Settings } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, ArrowLeft, Check, ChevronDown, Download, Eye, File, Plus, Printer, Settings } from "lucide-react";
 import type { SyncStatus } from "@/Router";
 import {
   DndContext,
@@ -20,14 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+import { NewMoodboardEmptyState } from "@/components/new-moodboard-empty";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Sidebar,
@@ -58,11 +51,13 @@ import { FontBlockCard, type FontBlockCardProps } from "@/components/font-block-
 import { useDebounce } from "@/hooks/use-debounce";
 import { generateMoodboardPdf } from "@/lib/pdf";
 import {
+  cacheUploadBytes,
+  getUploadBytes,
   queryLocalFonts,
   supportsLocalFonts,
   type LocalFontEntry,
 } from "@/lib/fonts";
-import { registerFontFile } from "@/lib/storage";
+import { loadUploadFont, registerFontFile } from "@/lib/storage";
 import {
   BODY_DEFAULT_LEADING,
   BODY_DEFAULT_SIZE,
@@ -77,7 +72,9 @@ import {
   type FontUpload,
   type Variant,
 } from "@/lib/types";
+import { DEFAULT_MOODBOARD_ICON_EMOJI } from "@/lib/moodboard-emojis";
 import { exportTypomoodboard, parseTypomoodboardFile } from "@/lib/typomoodboard-file";
+import { cn } from "@/lib/utils";
 
 // ── SortableBlockCard wrapper ────────────────────────────────────────────────
 
@@ -136,12 +133,14 @@ function useReorderBlocks(setBlocks: React.Dispatch<React.SetStateAction<FontBlo
 
 export interface AppProps {
   initialName?: string;
+  initialIconEmoji?: string;
   initialBlocks?: FontBlock[];
   initialDefaultHeadingText?: string;
   initialDefaultBodyText?: string;
   onBack?: () => void;
   onDataChange?: (data: {
     name: string;
+    iconEmoji: string;
     blocks: FontBlock[];
     defaultHeadingText: string;
     defaultBodyText: string;
@@ -149,10 +148,13 @@ export interface AppProps {
   syncStatus?: Exclude<SyncStatus, "idle">;
   backLabel?: string;
   emptyBackLabel?: string;
+  /** When true, empty moodboards play the exit background fade before `onBack` (e.g. to landing). Omit for dashboard back. */
+  exitRouteBgFadeOnEmptyBack?: boolean;
 }
 
 export function App({
   initialName = "My first Typo Moodboard",
+  initialIconEmoji,
   initialBlocks = [],
   initialDefaultHeadingText,
   initialDefaultBodyText,
@@ -161,8 +163,10 @@ export function App({
   syncStatus,
   backLabel = "Dashboard",
   emptyBackLabel = "Back to Start",
+  exitRouteBgFadeOnEmptyBack = false,
 }: AppProps = {}) {
   const [name, setName] = useState(initialName);
+  const [iconEmoji, setIconEmoji] = useState(initialIconEmoji ?? DEFAULT_MOODBOARD_ICON_EMOJI);
   const [blocks, setBlocks] = useState<FontBlock[]>(initialBlocks);
   const [uploads, setUploads] = useState<FontUpload[]>([]);
   const [systemFonts, setSystemFonts] = useState<LocalFontEntry[]>([]);
@@ -192,12 +196,13 @@ export function App({
     }
     onDataChange?.({
       name,
+      iconEmoji,
       blocks,
       defaultHeadingText,
       defaultBodyText,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, blocks, defaultHeadingText, defaultBodyText]);
+  }, [name, iconEmoji, blocks, defaultHeadingText, defaultBodyText]);
 
   useEffect(() => {
     if (supportsLocalFonts()) {
@@ -206,6 +211,60 @@ export function App({
   }, []);
 
   const debouncedBlocks = useDebounce(blocks, 350);
+
+  const uploadIdsKey = useMemo(() => {
+    const ids = blocks
+      .filter((b) => b.source === "upload" && b.uploadId)
+      .map((b) => b.uploadId as string);
+    return [...new Set(ids)].sort().join("\0");
+  }, [blocks]);
+
+  const uploadsListKey = useMemo(
+    () =>
+      [...uploads]
+        .map((u) => u.id)
+        .sort()
+        .join("\0"),
+    [uploads],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const seen = new Set<string>();
+    const needed: { id: string; family: string; style: string }[] = [];
+    for (const b of blocks) {
+      if (b.source !== "upload" || !b.uploadId || seen.has(b.uploadId)) continue;
+      seen.add(b.uploadId);
+      needed.push({ id: b.uploadId, family: b.family, style: b.style });
+    }
+    if (needed.length === 0) return;
+
+    void (async () => {
+      const recovered: FontUpload[] = [];
+      for (const e of needed) {
+        if (getUploadBytes(e.id)) {
+          recovered.push({ id: e.id, family: e.family, style: e.style });
+          continue;
+        }
+        const buf = await loadUploadFont(e.id);
+        if (cancelled) return;
+        if (buf) {
+          cacheUploadBytes(e.id, buf);
+          recovered.push({ id: e.id, family: e.family, style: e.style });
+        }
+      }
+      if (cancelled || recovered.length === 0) return;
+      setUploads((prev) => {
+        const byId = new Map(prev.map((u) => [u.id, u]));
+        for (const u of recovered) byId.set(u.id, u);
+        return [...byId.values()];
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [blocks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,8 +286,10 @@ export function App({
         if (!cancelled) setRendering(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [debouncedBlocks]);
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedBlocks, uploadIdsKey, uploadsListKey]);
 
   useEffect(() => {
     return () => {
@@ -371,6 +432,7 @@ export function App({
         return;
       }
       setName(parsed.name);
+      setIconEmoji(parsed.iconEmoji);
       setBlocks(parsed.blocks);
       setDefaultHeadingText(parsed.defaultHeadingText);
       setDefaultBodyText(parsed.defaultBodyText);
@@ -392,6 +454,7 @@ export function App({
       <AppShell
         name={name}
         setName={setName}
+        iconEmoji={iconEmoji}
         blocks={blocks}
         uploads={uploads}
         systemFonts={systemFonts}
@@ -427,6 +490,7 @@ export function App({
         backLabel={backLabel}
         emptyBackLabel={emptyBackLabel}
         syncStatus={syncStatus}
+        exitRouteBgFadeOnEmptyBack={exitRouteBgFadeOnEmptyBack}
       />
     </SidebarProvider>
   );
@@ -437,6 +501,7 @@ export function App({
 interface AppShellProps {
   name: string;
   setName: (v: string) => void;
+  iconEmoji: string;
   blocks: FontBlock[];
   uploads: FontUpload[];
   systemFonts: LocalFontEntry[];
@@ -472,10 +537,11 @@ interface AppShellProps {
   backLabel: string;
   emptyBackLabel: string;
   syncStatus?: Exclude<SyncStatus, "idle">;
+  exitRouteBgFadeOnEmptyBack: boolean;
 }
 
 function AppShell({
-  name, setName, blocks, uploads, systemFonts, collapsedIds,
+  name, setName, iconEmoji, blocks, uploads, systemFonts, collapsedIds,
   blockSensors, reorderBlocks, updateBlock, duplicateBlock, deleteBlock,
   setBlockVariants, toggleCollapse, onUploadFont,
   dialogOpen, setDialogOpen, settingsOpen, setSettingsOpen,
@@ -485,12 +551,46 @@ function AppShell({
   setDefaultHeadingText, setDefaultBodyText,
   pdfUrl, rendering, importInputRef, onImport,
   downloadPdf, printPdf, addBlock,
-  onBack, backLabel, emptyBackLabel, syncStatus,
+  onBack, backLabel, emptyBackLabel, syncStatus, exitRouteBgFadeOnEmptyBack,
 }: AppShellProps) {
   const { open: sidebarOpen, setOpen: setSidebarOpen, isMobile } = useSidebar();
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const isEmpty = blocks.length === 0;
+  const [showEmptyRouteBgOverlay, setShowEmptyRouteBgOverlay] = useState(() => {
+    if (blocks.length > 0) return false;
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return false;
+    }
+    return true;
+  });
+  const [exitRouteBgFade, setExitRouteBgFade] = useState(false);
+  const hadBlocksRef = useRef(false);
+  const [emptyRevealKey, setEmptyRevealKey] = useState(0);
+
+  useLayoutEffect(() => {
+    if (!isEmpty) {
+      setShowEmptyRouteBgOverlay(false);
+      setExitRouteBgFade(false);
+      return;
+    }
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setShowEmptyRouteBgOverlay(false);
+      return;
+    }
+    setShowEmptyRouteBgOverlay(true);
+  }, [isEmpty]);
+
+  useEffect(() => {
+    if (blocks.length > 0) {
+      hadBlocksRef.current = true;
+      return;
+    }
+    if (hadBlocksRef.current) {
+      hadBlocksRef.current = false;
+      setEmptyRevealKey((k) => k + 1);
+    }
+  }, [blocks.length]);
 
   useEffect(() => {
     if (!isMobile) setSidebarOpen(!isEmpty);
@@ -542,7 +642,9 @@ function AppShell({
           Download PDF
         </DropdownMenuItem>
         <DropdownMenuItem
-          onClick={() => exportTypomoodboard(name, blocks, defaultHeadingText, defaultBodyText)}
+          onClick={() =>
+            exportTypomoodboard(name, blocks, defaultHeadingText, defaultBodyText, iconEmoji)
+          }
         >
           <File className="size-4" />
           Export .typomoodboard
@@ -570,15 +672,45 @@ function AppShell({
     />
   );
 
+  const goBackFromEditor = useCallback(() => {
+    if (!onBack) return;
+    if (!isEmpty) {
+      onBack();
+      return;
+    }
+    if (!exitRouteBgFadeOnEmptyBack) {
+      onBack();
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      onBack();
+      return;
+    }
+    setShowEmptyRouteBgOverlay(false);
+    setExitRouteBgFade(true);
+  }, [isEmpty, onBack, exitRouteBgFadeOnEmptyBack]);
+
+  const menuBarMotionClass =
+    isEmpty &&
+    "motion-safe:animate-[app-menubar-fade-in_0.38s_cubic-bezier(0.22,1,0.36,1)_both]";
+
   const fontManager = (
     <>
-      <SidebarHeader className="flex h-14 shrink-0 flex-row items-center gap-2 border-b border-sidebar-border px-3 py-0">
+      <SidebarHeader
+        className={cn(
+          "sticky top-0 z-30 flex h-14 shrink-0 flex-row items-center gap-2 border-b border-sidebar-border bg-sidebar px-3 py-0",
+          menuBarMotionClass,
+        )}
+      >
         <div className="flex min-h-0 w-full min-w-0 items-center gap-2">
           {onBack && (
             <Button
               variant="ghost"
               className="h-9 shrink-0 gap-2 px-2 font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              onClick={onBack}
+              onClick={goBackFromEditor}
             >
               <ArrowLeft className="size-4 shrink-0 opacity-80" aria-hidden />
               {backLabel}
@@ -613,48 +745,17 @@ function AppShell({
         <ScrollArea className="h-full">
           {isEmpty ? (
             isMobile ? (
-              <div className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center px-4">
-                <Empty className="max-w-sm">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <FileType />
-                    </EmptyMedia>
-                    <EmptyTitle>Welcome to your new moodboard!</EmptyTitle>
-                    <EmptyDescription>
-                      Add a heading or body block to get started.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyContent>
-                    <div className="flex w-full flex-col gap-2">
-                      <Button
-                        className="w-full"
-                        onClick={() => setDialogOpen(true)}
-                      >
-                        <Plus className="size-4" />
-                        Add font block
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => importInputRef.current?.click()}
-                      >
-                        <FolderOpen className="size-4" />
-                        Import .typomoodboard file
-                      </Button>
-                      {onBack && (
-                        <Button
-                          variant="outline"
-                          className="w-full"
-                          onClick={onBack}
-                        >
-                          <ArrowLeft className="size-4" />
-                          {emptyBackLabel}
-                        </Button>
-                      )}
-                      {importInput}
-                    </div>
-                  </EmptyContent>
-                </Empty>
+              <div
+                key={`mood-empty-${emptyRevealKey}`}
+                className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center px-4"
+              >
+                <NewMoodboardEmptyState
+                  onAddBlock={() => setDialogOpen(true)}
+                  onImportClick={() => importInputRef.current?.click()}
+                  importSlot={importInput}
+                  onBack={goBackFromEditor}
+                  emptyBackLabel={emptyBackLabel}
+                />
               </div>
             ) : (
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
@@ -712,48 +813,17 @@ function AppShell({
   );
 
   const previewFrame = isEmpty ? (
-    <div className="flex h-full items-center justify-center">
-      <Empty className="max-w-sm">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FileType />
-          </EmptyMedia>
-          <EmptyTitle>Welcome to your new moodboard!</EmptyTitle>
-          <EmptyDescription>
-            Add a heading or body block to get started.
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <div className="flex w-full flex-col gap-2">
-            <Button
-              className="w-full"
-              onClick={() => setDialogOpen(true)}
-            >
-              <Plus className="size-4" />
-              Add font block
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => importInputRef.current?.click()}
-            >
-              <FolderOpen className="size-4" />
-              Import .typomoodboard file
-            </Button>
-            {onBack && (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={onBack}
-              >
-                <ArrowLeft className="size-4" />
-                {emptyBackLabel}
-              </Button>
-            )}
-            {importInput}
-          </div>
-        </EmptyContent>
-      </Empty>
+    <div
+      key={`mood-empty-${emptyRevealKey}`}
+      className="flex h-full items-center justify-center"
+    >
+      <NewMoodboardEmptyState
+        onAddBlock={() => setDialogOpen(true)}
+        onImportClick={() => importInputRef.current?.click()}
+        importSlot={importInput}
+        onBack={goBackFromEditor}
+        emptyBackLabel={emptyBackLabel}
+      />
     </div>
   ) : (
     <iframe
@@ -811,7 +881,12 @@ function AppShell({
         {isMobile ? (
           mobileSettingsOpen ? (
             <>
-              <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-3">
+              <header
+                className={cn(
+                  "sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-3",
+                  menuBarMotionClass,
+                )}
+              >
                 <Button
                   variant="ghost"
                   size="icon"
@@ -837,7 +912,12 @@ function AppShell({
             </>
           ) : mobilePreviewOpen ? (
             <>
-              <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-3">
+              <header
+                className={cn(
+                  "sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-3",
+                  menuBarMotionClass,
+                )}
+              >
                 <Button
                   variant="ghost"
                   size="icon"
@@ -872,7 +952,12 @@ function AppShell({
           )
         ) : (
           <>
-            <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
+            <header
+              className={cn(
+                "sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4",
+                menuBarMotionClass,
+              )}
+            >
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -948,6 +1033,28 @@ function AppShell({
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      )}
+
+      {isEmpty && showEmptyRouteBgOverlay && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-40 bg-background motion-safe:animate-[empty-board-route-bg-fade_0.55s_ease-out_forwards]"
+          onAnimationEnd={(e) => {
+            if (e.target !== e.currentTarget) return;
+            setShowEmptyRouteBgOverlay(false);
+          }}
+        />
+      )}
+
+      {isEmpty && exitRouteBgFade && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-[60] bg-background motion-safe:animate-[empty-board-route-bg-exit_0.28s_ease-out_forwards]"
+          onAnimationEnd={(e) => {
+            if (e.target !== e.currentTarget) return;
+            onBack?.();
+          }}
+        />
       )}
     </>
   );

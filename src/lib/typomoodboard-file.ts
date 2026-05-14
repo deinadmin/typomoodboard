@@ -1,10 +1,13 @@
 import type { BlockKind, FontBlock, FontSource } from "./types";
 import { BODY_SAMPLE, HEADING_SAMPLE } from "./types";
+import { DEFAULT_MOODBOARD_ICON_EMOJI } from "./moodboard-emojis";
 
 /** On-disk / export shape for `.typomoodboard` JSON (version 1). */
 interface TypomoodboardFileV1 {
   version: 1;
   name: string;
+  /** Dashboard card icon; optional on legacy exports. */
+  iconEmoji?: string;
   defaultHeadingText?: string;
   defaultBodyText?: string;
   blocks: Array<{
@@ -29,6 +32,7 @@ function isRecord(x: unknown): x is Record<string, unknown> {
  */
 export function parseTypomoodboardFile(json: string): {
   name: string;
+  iconEmoji: string;
   blocks: FontBlock[];
   defaultHeadingText: string;
   defaultBodyText: string;
@@ -47,6 +51,15 @@ export function parseTypomoodboardFile(json: string): {
     return null;
   }
   if (root.defaultBodyText !== undefined && typeof root.defaultBodyText !== "string") {
+    return null;
+  }
+  if (root.iconEmoji !== undefined && typeof root.iconEmoji !== "string") {
+    return null;
+  }
+  if (
+    typeof root.iconEmoji === "string" &&
+    root.iconEmoji.trim().length > 32
+  ) {
     return null;
   }
 
@@ -82,6 +95,11 @@ export function parseTypomoodboardFile(json: string): {
   }
 
   const data = root as unknown as TypomoodboardFileV1;
+  const rawIcon =
+    typeof data.iconEmoji === "string" && data.iconEmoji.trim().length > 0
+      ? data.iconEmoji.trim()
+      : DEFAULT_MOODBOARD_ICON_EMOJI;
+
   const blocks: FontBlock[] = data.blocks.map((b) => ({
     id: crypto.randomUUID(),
     kind: b.kind,
@@ -100,6 +118,7 @@ export function parseTypomoodboardFile(json: string): {
 
   return {
     name: data.name,
+    iconEmoji: rawIcon,
     blocks,
     defaultHeadingText:
       typeof data.defaultHeadingText === "string" && data.defaultHeadingText.length > 0
@@ -117,10 +136,12 @@ export function exportTypomoodboard(
   blocks: FontBlock[],
   defaultHeadingText: string,
   defaultBodyText: string,
+  iconEmoji: string,
 ) {
   const data: TypomoodboardFileV1 = {
     version: 1,
     name,
+    iconEmoji: iconEmoji.trim() || DEFAULT_MOODBOARD_ICON_EMOJI,
     defaultHeadingText,
     defaultBodyText,
     blocks: blocks.map((b) => ({
